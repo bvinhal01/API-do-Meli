@@ -1,35 +1,42 @@
-import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
+import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
-import { ProductResponseDto } from './dtos/product-response.dto';
 
 @Injectable()
 export class MercadoLivreService {
   private readonly logger = new Logger(MercadoLivreService.name);
 
-  constructor(private readonly httpService: HttpService) {}
+  constructor(
+    private readonly httpService: HttpService,
+    private readonly configService: ConfigService, // Para ler o .env
+  ) {}
 
-  async buscarProdutoNoMeli(idDoProduto: string): Promise<ProductResponseDto> {
-    const url = `https://api.mercadolibre.com/items/${idDoProduto}`;
-    
+  // 1. Gera o link que você vai clicar para autorizar o app
+  getAuthorizationUrl() {
+    const clientId = this.configService.get('ML_CLIENT_ID');
+    const redirectUri = this.configService.get('ML_REDIRECT_URI');
+    return `https://auth.mercadolivre.com.br/authorization?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}`;
+  }
+
+  // 2. Troca o código recebido pelo Token Real
+  async exchangeCodeForToken(code: string) {
+    const url = 'https://api.mercadolibre.com/oauth/token';
+    const body = {
+      grant_type: 'authorization_code',
+      client_id: this.configService.get('ML_CLIENT_ID'),
+      client_secret: this.configService.get('ML_CLIENT_SECRET'),
+      code: code,
+      redirect_uri: this.configService.get('ML_REDIRECT_URI'),
+    };
+
     try {
-      const response = await firstValueFrom(this.httpService.get(url));
-      const data = response.data;
-      
-      return {
-        id: data.id,
-        title: data.title,
-        price: data.price,
-        currency_id: data.currency_id,
-        permalink: data.permalink,
-        thumbnail: data.thumbnail,
-      };
+      const { data } = await firstValueFrom(this.httpService.post(url, body));
+      this.logger.log('Token gerado com sucesso!');
+      return data; // Aqui vem o access_token
     } catch (error) {
-      // ESTA LINHA ABAIXO É A CHAVE: Ela vai imprimir o erro real no terminal
-      console.error('ERRO REAL DA API:', error.response?.data || error.message);
-      
-      this.logger.error(`Erro ao buscar produto: ${error.message}`);
-      throw new Error(`Erro ao buscar produto: ${idDoProduto}`);
+      this.logger.error('Erro ao gerar token', error.response?.data);
+      throw error;
     }
   }
 }
